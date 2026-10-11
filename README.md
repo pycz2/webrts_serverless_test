@@ -61,4 +61,5 @@ npm i --no-save playwright-core && node test.mjs
 
 ## Публикация на GitHub Pages
 
-Settings → Pages → Source: «Deploy from a branch» → `main` / `/ (root)` → Save. Через минуту сайт доступен по адресу выше.
+Settings → Pages → Source: «Deploy from a branch» → `gh-pages` / `/ (root)` → Save. Через минуту сайт доступен по адресу выше.
+Обновить сайт: `git push origin main:gh-pages`.
