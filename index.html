@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebRTC P2P чат</title>
+<style>
+  body { font: 16px system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 16px; }
+  textarea, input { width: 100%; box-sizing: border-box; font: inherit; margin: 4px 0; }
+  textarea { height: 6em; font: 12px monospace; word-break: break-all; }
+  #log { border: 1px solid #ccc; height: 320px; overflow-y: auto; padding: 8px; margin: 8px 0; white-space: pre-wrap; }
+  .me { color: #06c; } .sys { color: #888; font-style: italic; }
+  form { display: flex; gap: 8px; } form input { flex: 1; }
+</style>
+</head>
+<body>
+<h1>WebRTC P2P чат</h1>
+<p>Статус: <b id="status">new</b></p>
+
+<section id="host">
+  <button id="create">1. Создать приглашение</button>
+  <div id="hostStep" hidden>
+    <p>2. Отправьте эту ссылку собеседнику любым способом (мессенджер, почта…). Не закрывайте эту вкладку.</p>
+    <textarea id="offerOut" readonly></textarea>
+    <button data-copy="offerOut">Копировать ссылку</button>
+    <p>3. Вставьте сюда код-ответ, который пришлёт собеседник:</p>
+    <textarea id="answerIn"></textarea>
+    <button id="accept">Подключиться</button>
+  </div>
+</section>
+
+<section id="guest" hidden>
+  <p>Отправьте этот код-ответ обратно тому, кто прислал ссылку. Не закрывайте эту вкладку.</p>
+  <textarea id="answerOut" readonly>Генерация…</textarea>
+  <button data-copy="answerOut">Копировать код</button>
+</section>
+
+<section id="chat" hidden>
+  <input id="name" placeholder="Ваше имя">
+  <div id="log"></div>
+  <form id="form"><input id="msg" placeholder="Сообщение" autocomplete="off"><button>Отправить</button></form>
+</section>
+
+<script type="module">
+// Только публичные STUN-серверы: они лишь сообщают браузеру его внешний IP:порт.
+// ponytail: без TURN не соединит две стороны, если обе за symmetric NAT (часть мобильных/корпоративных сетей);
+// для таких сетей добавьте сюда {urls: 'turn:…', username, credential}.
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
+
+const $ = id => document.getElementById(id);
+const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+let dc;
+
+pc.onconnectionstatechange = () => $('status').textContent = pc.connectionState;
+
+// SDP -> deflate -> base64url, чтобы код был короче и влезал в URL/сообщение.
+async function pack(desc) {
+  const json = JSON.stringify({ type: desc.type, sdp: desc.sdp });
+  const bytes = new Uint8Array(await new Response(
+    new Blob([json]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function unpack(code) {
+  const bytes = Uint8Array.from(atob(code.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  return JSON.parse(await new Response(
+    new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
+}
+
+// Ждём сбора всех ICE-кандидатов, чтобы весь обмен уложился в одну ссылку и один ответ.
+async function localCode() {
+  if (pc.iceGatheringState !== 'complete') await new Promise(resolve => {
+    pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && resolve();
+    setTimeout(resolve, 5000);
+  });
+  return pack(pc.localDescription);
+}
+
+function log(cls, text) {
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = text;
+  $('log').append(div);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+// Какой маршрут выбран: host = локальная сеть, srflx = прямо через NAT (STUN), relay = через TURN.
+async function route() {
+  const stats = await pc.getStats();
+  let pair;
+  stats.forEach(r => {
+    if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+    else if (r.type === 'candidate-pair' && r.selected) pair = r; // Firefox
+  });
+  if (!pair) return 'неизвестно';
+  const l = stats.get(pair.localCandidateId), r = stats.get(pair.remoteCandidateId);
+  return `${l.candidateType} ↔ ${r.candidateType}, ${l.protocol}`;
+}
+
+function setupChannel(channel) {
+  dc = channel;
+  dc.onopen = async () => {
+    $('host').hidden = $('guest').hidden = true;
+    $('chat').hidden = false;
+    $('msg').focus();
+    log('sys', `Соединение установлено (${await route()})`);
+  };
+  dc.onclose = () => log('sys', 'Соединение закрыто');
+  dc.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      log('', `${m.name}: ${m.text}`);
+    } catch {
+      log('', String(e.data));
+    }
+  };
+}
+
+function fail(err) {
+  console.error(err);
+  alert('Ошибка: ' + err.message);
+}
+
+document.querySelectorAll('[data-copy]').forEach(btn =>
+  btn.onclick = () => navigator.clipboard.writeText($(btn.dataset.copy).value).then(() => btn.textContent = 'Скопировано ✓'));
+
+$('form').onsubmit = e => {
+  e.preventDefault();
+  const text = $('msg').value.trim();
+  if (!text || dc?.readyState !== 'open') return;
+  const name = $('name').value.trim() || 'Аноним';
+  dc.send(JSON.stringify({ name, text }));
+  log('me', `${name}: ${text}`);
+  $('msg').value = '';
+};
+
+if (location.hash.length > 1) {
+  // Гость: открыл ссылку с offer в #hash.
+  $('host').hidden = true;
+  $('guest').hidden = false;
+  $('name').value = 'Гость';
+  pc.ondatachannel = e => setupChannel(e.channel);
+  try {
+    await pc.setRemoteDescription(await unpack(location.hash.slice(1)));
+    await pc.setLocalDescription(await pc.createAnswer());
+    $('answerOut').value = await localCode();
+  } catch (err) {
+    $('answerOut').value = 'Ссылка повреждена: ' + err.message;
+  }
+} else {
+  // Хост: создаёт offer и ждёт ответ.
+  $('name').value = 'Хост';
+  $('create').onclick = async () => {
+    $('create').disabled = true;
+    try {
+      setupChannel(pc.createDataChannel('chat'));
+      await pc.setLocalDescription(await pc.createOffer());
+      $('offerOut').value = location.href.split('#')[0] + '#' + await localCode();
+      $('hostStep').hidden = false;
+    } catch (err) { fail(err); }
+  };
+  $('accept').onclick = async () => {
+    try {
+      await pc.setRemoteDescription(await unpack($('answerIn').value.trim()));
+      $('accept').disabled = true;
+    } catch (err) { fail(err); }
+  };
+}
+</script>
+</body>
+</html>
