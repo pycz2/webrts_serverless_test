@@ -50,12 +50,18 @@
 </section>
 
 <script type="module">
-// Только публичные STUN-серверы: они лишь сообщают браузеру его внешний IP:порт.
-// ponytail: без TURN не соединит две стороны, если обе за symmetric NAT (часть мобильных/корпоративных сетей);
-// для таких сетей добавьте сюда {urls: 'turn:…', username, credential}.
+// STUN сообщает браузеру его внешний IP:порт — этого хватает для прямого соединения в большинстве сетей.
+// TURN (бесплатный тариф ExpressTURN, 1 ТБ/мес) — запасной ретранслятор, если обе стороны за symmetric NAT
+// или UDP закрыт. Браузер использует его, только когда прямые маршруты не работают.
+// ponytail: логин виден всем в коде страницы; для продукта нужны временные логины от своего бэкенда.
 const ICE_SERVERS = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: 'stun:stun.cloudflare.com:3478' },
+  {
+    urls: ['turn:free.expressturn.com:3478', 'turn:free.expressturn.com:3478?transport=tcp'],
+    username: '000000002107107828',
+    credential: '5mXEP7ZkQ9DzSgm/B5EfRGEWH/k=',
+  },
 ];
 
 const $ = id => document.getElementById(id);
