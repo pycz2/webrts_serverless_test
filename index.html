@@ -17,7 +17,15 @@
 <h1>WebRTC P2P чат</h1>
 <p>Статус: <b id="status">new</b></p>
 
+<section id="join">
+  <h3>Вас пригласили?</h3>
+  <p>Откройте присланную ссылку или вставьте её сюда:</p>
+  <input id="joinIn" placeholder="https://…#…">
+  <button id="joinBtn">Подключиться к приглашению</button>
+</section>
+
 <section id="host">
+  <h3>Или пригласите сами</h3>
   <button id="create">1. Создать приглашение</button>
   <div id="hostStep" hidden>
     <p>2. Отправьте эту ссылку собеседнику любым способом (мессенджер, почта…). Не закрывайте эту вкладку.</p>
@@ -103,7 +111,7 @@ async function route() {
 function setupChannel(channel) {
   dc = channel;
   dc.onopen = async () => {
-    $('host').hidden = $('guest').hidden = true;
+    $('join').hidden = $('host').hidden = $('guest').hidden = true;
     $('chat').hidden = false;
     $('msg').focus();
     log('sys', `Соединение установлено (${await route()})`);
@@ -139,7 +147,7 @@ $('form').onsubmit = e => {
 
 if (location.hash.length > 1) {
   // Гость: открыл ссылку с offer в #hash.
-  $('host').hidden = true;
+  $('join').hidden = $('host').hidden = true;
   $('guest').hidden = false;
   $('name').value = 'Гость';
   pc.ondatachannel = e => setupChannel(e.channel);
@@ -153,8 +161,16 @@ if (location.hash.length > 1) {
 } else {
   // Хост: создаёт offer и ждёт ответ.
   $('name').value = 'Хост';
+  // Принимаем и полную ссылку, и голый код после '#'.
+  $('joinBtn').onclick = () => {
+    const code = $('joinIn').value.trim().split('#').pop();
+    if (!code) return;
+    location.hash = code;
+    location.reload();
+  };
   $('create').onclick = async () => {
     $('create').disabled = true;
+    $('join').hidden = true;
     try {
       setupChannel(pc.createDataChannel('chat'));
       await pc.setLocalDescription(await pc.createOffer());

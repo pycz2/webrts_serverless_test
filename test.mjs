@@ -29,7 +29,10 @@ try {
   }, link.split('#')[1]);
   console.log('srflx candidate from STUN:', /typ srflx/.test(offer));
 
-  await guest.goto(link);
+  // Гость открывает чистую страницу и вставляет ссылку в поле «Вас пригласили?».
+  await guest.goto(url);
+  await guest.fill('#joinIn', link);
+  await guest.click('#joinBtn');
   await guest.waitForFunction(() => !document.querySelector('#answerOut').value.startsWith('Генерация'), null, { timeout: 15000 });
   const answer = await guest.locator('#answerOut').inputValue();
   assert.doesNotMatch(answer, /повреждена/);
