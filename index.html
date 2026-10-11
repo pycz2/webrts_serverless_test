@@ -152,7 +152,23 @@ if (location.hash.length > 1) {
   $('name').value = 'Гость';
   pc.ondatachannel = e => setupChannel(e.channel);
   try {
-    await pc.setRemoteDescription(await unpack(location.hash.slice(1)));
+    // Гость начинает ICE-проверки сразу, а хост вставит код-ответ только через минуту-другую.
+    // Firefox без ответа сдаётся за ~10 с, поэтому кандидаты хоста подаются заново каждые 5 с
+    // с новым foundation (иначе браузер считает их дублями) — пока соединение не установится.
+    const offer = await unpack(location.hash.slice(1));
+    const hostCandidates = offer.sdp.match(/^a=candidate:.*$/gm) || [];
+    offer.sdp = offer.sdp.replace(/^a=(candidate:.*|end-of-candidates)\r\n/gm, '');
+    await pc.setRemoteDescription(offer);
+    const sdpMid = offer.sdp.match(/^a=mid:(.*)$/m)[1];
+    let round = 0;
+    const addHostCandidates = () => {
+      if (pc.connectionState === 'connected') return clearInterval(retry);
+      round++;
+      for (const c of hostCandidates)
+        pc.addIceCandidate({ candidate: c.slice(2).replace(/^candidate:/, `candidate:r${round}`), sdpMid }).catch(() => {});
+    };
+    const retry = setInterval(addHostCandidates, 5000);
+    addHostCandidates();
     await pc.setLocalDescription(await pc.createAnswer());
     $('answerOut').value = await localCode();
   } catch (err) {
